@@ -120,6 +120,8 @@ git reset HEAD --hard
 git pull --force
 git reset origin/master --hard
 
+chown 1000:1000 . -R
+
 if [ -n "$(git status --porcelain)" ]; then
 
     git add -v .
