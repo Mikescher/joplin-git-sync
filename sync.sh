@@ -19,6 +19,9 @@
     function white() { if [ -t 1 ] && [ -n "$(tput colors)" ] && [ "$(tput colors)" -ge 8 ]; then echo -e "\x1B[37m$1\x1B[0m"; else echo "$1"; fi; }
 
 
+cd "$(dirname "$0")" || exit 1
+
+
 ##########################################################################################################################################################
 
 function header() { echo "" ; printf '=%.0s' {1..80} && printf '\n' ; echo "> $1" ; printf '=%.0s' {1..80} && printf '\n' ; echo "" ; }
@@ -32,6 +35,8 @@ acc_mail="ms@blackforestbytes.de"
 acc_pass="$( cat password.env )"
 acc_encr="$( cat encryption.env )"
 
+container="registry.blackforestbytes.com/mikescher/joplin-git-sync:latest"
+
 echo "> Stop dangling container"
 
 docker stop "$cname" || true
@@ -39,9 +44,12 @@ docker rm   "$cname" || true
 
 echo "> Start container"
 
-docker run --detach --name "$cname" --volume "$(pwd):/portal" "registry.blackforestbytes.com/mikescher/joplin-git-sync:latest" noop
+docker pull "$container"
+
+docker run --detach --name "$cname" --volume "$(pwd):/portal" --volume "$(pwd)/joplin_cache:/home/u0/.config/joplin" "$container" noop
 
 function __trap_failed {
+    scnsend "Joplin sync failed on line $(caller)"
     docker stop "$cname" || true
     docker rm   "$cname" || true
 }

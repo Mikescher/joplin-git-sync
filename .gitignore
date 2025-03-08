@@ -5,3 +5,7 @@ notes_git
 notes_git/*
 
 *.env
+
+joplin_cache
+
+
