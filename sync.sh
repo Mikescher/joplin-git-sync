@@ -31,7 +31,7 @@ function header() { echo "" ; printf '=%.0s' {1..80} && printf '\n' ; echo "> $1
 cname="joplin-sync"
 
 server="https://notes.blackforestbytes.com/"
-acc_mail="ms@blackforestbytes.de"
+acc_mail="$( cat account.env )"
 acc_pass="$( cat password.env )"
 acc_encr="$( cat encryption.env )"
 
@@ -39,8 +39,12 @@ container="registry.blackforestbytes.com/mikescher/joplin-git-sync:latest"
 
 echo "> Stop dangling container"
 
-docker stop "$cname" || true
-docker rm   "$cname" || true
+if docker ps -a --format '{{.Names}}' | grep -q "^$cname$"; then
+    docker stop "$cname" || true
+    docker rm   "$cname" || true
+else
+    echo "Container '$cname' does not exist. Skipping stop and remove."
+fi
 
 echo "> Start container"
 
@@ -49,21 +53,40 @@ docker pull "$container"
 docker run --detach --name "$cname" --volume "$(pwd):/portal" --volume "$(pwd)/joplin_cache:/home/u0/.config/joplin" "$container" noop
 
 function __trap_failed {
-    scnsend "Joplin sync failed on line $(caller)"
+    # scnsend "Joplin sync failed on line $(caller)"
     docker stop "$cname" || true
     docker rm   "$cname" || true
 }
 trap __trap_failed ERR
 
-header "Login"
+reinit="0"
 
-docker exec "$cname" "/usr/bin/joplin" config "sync.target"     "9"
+if [ ! -f "joplin_cache/__init" ]; then
 
-docker exec "$cname" "/usr/bin/joplin" config "sync.interval"   "0"
+    header "Login + Setup"
 
-docker exec "$cname" "/usr/bin/joplin" config "sync.9.path"     "$server"
-docker exec "$cname" "/usr/bin/joplin" config "sync.9.username" "$acc_mail"
-docker exec "$cname" "/usr/bin/joplin" config "sync.9.password" "$acc_pass"
+    reinit="1"
+
+    docker exec "$cname" "/usr/bin/joplin" config "sync.target"     "9" ; echo -n "."
+    
+    docker exec "$cname" "/usr/bin/joplin" config "sync.interval"   "0" ; echo -n "."
+    
+    docker exec "$cname" "/usr/bin/joplin" config "sync.9.path"     "$server"   ; echo -n "."
+    docker exec "$cname" "/usr/bin/joplin" config "sync.9.username" "$acc_mail" ; echo -n "."
+    docker exec "$cname" "/usr/bin/joplin" config "sync.9.password" "$acc_pass" ; echo -n "."
+    
+    docker exec "$cname" "/usr/bin/joplin" config "revisionService.enabled"   "false" ; echo -n "."
+    docker exec "$cname" "/usr/bin/joplin" config "revisionService.ttlDays"   "0"     ; echo -n "."
+
+    touch "joplin_cache/__init"
+
+else
+
+    green "Found __init file -- will skip setup"
+
+fi
+
+echo ""
 
 header "Config"
 
@@ -83,8 +106,23 @@ docker exec "$cname" "/usr/bin/joplin" status
 
 header "Decrypt"
 
-docker exec "$cname" "/usr/bin/joplin" e2ee enable --password "$acc_encr"
-docker exec "$cname" "/usr/bin/joplin" e2ee decrypt
+if [ "$reinit" == "1" ]; then
+
+    echo "... Set E2EE PW"
+
+    # TODO this sucks - this way we create a new masterkey instead of inputting the pw of the existing one
+    #      I _really_ don't want that (and the docs say `e2ee decrypt --password ".."` shoudl work - but it doesnt)
+    #      So for now this is commented out - when someone deletes the joplin_cache, he has to run ./sync with an TTY
+    #      and manually input the master pw.
+    # docker exec "$cname" "/usr/bin/joplin" e2ee enable --password "$acc_encr"
+    
+    docker exec -it "$cname" "/usr/bin/joplin" e2ee decrypt --retry-failed-items 
+
+else
+
+    docker exec "$cname" "/usr/bin/joplin" e2ee decrypt --retry-failed-items 
+
+fi
 
 header "List"
 
@@ -108,6 +146,14 @@ docker rm   "$cname"
 
 header "Sync files to repo"
 
+cd "notes_git"
+
+git reset HEAD --hard
+git pull --force
+git reset origin/master --hard
+
+cd ".."
+
 rm -rf -v "notes_git"/*
 
 cp -r -v "notes"/* "notes_git"
@@ -115,10 +161,6 @@ cp -r -v "notes"/* "notes_git"
 header "Commit & Push"
 
 cd "notes_git"
-
-git reset HEAD --hard
-git pull --force
-git reset origin/master --hard
 
 chown 1000:1000 . -R
 
